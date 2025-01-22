@@ -1,0 +1,41 @@
+{
+    "el_pais": {
+      "base_url": "https://elpais.com/noticias/inmigracion/",
+      "pagination_pattern": "{page_number}/",
+      "article_link_selector":".c_t a",
+      "start_page": 1,
+      "notes": "Second page starts at 1; third page is 2."
+    },
+    "el_mundo": {
+      "base_url": "https://www.elmundo.es/t/in/inmigracion/",
+      "pagination_pattern": "pag{page_number}",
+      "article_link_selector":".ue-c-cover-content__link",
+      "start_page": 2,
+      "notes": "Follow 'pagn' structure for pagination."
+    },
+    
+    "ABC": {
+      "base_url": "https://www.abc.es/sociedad/inmigracion/",
+      "pagination_pattern": "pagina-{page_number}.html",
+      "article_link_selector": "#zone-news-chrono a",
+      "pagination_button_selector": "#btn-crono",
+      "notes":"Pagination uses the #btn-crono button and requires cookies modal handling."
+    },
+    "20_minutos": {
+      "base_url": "https://www.20minutos.es/minuteca/inmigrantes",
+      "pagination_pattern": "/{page_number}/",
+      "article_link_selector":".media-content a",
+      "start_page": 1,
+      "end_page": 5,
+      "notes": "Only 5 pages available."
+    },
+    "la_vanguardia": {
+      "base_url": "https://www.lavanguardia.com/topics/search?q=inmigracion",
+      "pagination_pattern": "&page={page_number}",
+      "article_link_selector":".article-title a",
+      "start_page": 1,
+      "notes": "&page=n structure for pagination."
+    }
+  }
+  
+
