@@ -19,17 +19,6 @@ class DatabaseOutlierHandler:
         self.links_table = links_table
 
     def _execute_query(self, query, params=None, fetch=False):
-        """
-        Execute a database query with error handling.
-        
-        Args:
-            query (str): SQL query to execute.
-            params (tuple, optional): Query parameters.
-            fetch (bool, optional): Whether to fetch results.
-        
-        Returns:
-            Fetched data if fetch is True, otherwise None.
-        """
         try:
             with sqlite3.connect(self.db_path) as conn:
                 if fetch:
@@ -53,12 +42,18 @@ class DatabaseOutlierHandler:
             pd.DataFrame: DataFrame with joined data.
         """
         query = f"""
-            SELECT content.id, content.text, links.newspaper
+            SELECT content.id, content.text,content.publish_date, links.newspaper
             FROM {self.content_table}
             JOIN {self.links_table} ON {self.content_table}.id = {self.links_table}.id
         """
         return self._execute_query(query, fetch=True)
 
+    def format_time(self, df, column="publish_date"):
+        df[column] = pd.to_datetime(df[column], errors="coerce",format='ISO8601')
+        print('DATE ADJUSTED')
+        print(df)
+        return df
+    
     def detect_outliers(self, df, column='word_count', threshold=1.5):
         """
         Detect outliers using Interquartile Range (IQR) method.
@@ -93,22 +88,18 @@ class DatabaseOutlierHandler:
         return df
 
     def remove_outliers(self, df):
-        """
-        Remove outliers from the database using a direct SQL query.
-        
-        Args:
-            df (pd.DataFrame): DataFrame with outlier information.
-        
-        Returns:
-            int: Number of outliers removed.
-        """
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.cursor()
             
-            # Add outlier column if it doesn't exist
-            cursor.execute(f"ALTER TABLE {self.content_table} ADD COLUMN IF NOT EXISTS outlier INTEGER")
+            # Check if the column already exists
+            cursor.execute(f"PRAGMA table_info({self.content_table})")
+            columns = [info[1] for info in cursor.fetchall()]
             
-            # Update outlier column based on the DataFrame
+            if "outlier" not in columns:
+                # Add the outlier column if it doesn't exist
+                cursor.execute(f"ALTER TABLE {self.content_table} ADD COLUMN outlier INTEGER")
+            
+            # Update the outlier column based on the DataFrame
             update_query = f"UPDATE {self.content_table} SET outlier = ? WHERE id = ?"
             update_data = df[["outlier", "id"]].values.tolist()
             cursor.executemany(update_query, update_data)
@@ -126,17 +117,13 @@ class DatabaseOutlierHandler:
             
             conn.commit()
         
-        print(f"Outliers removed from the '{self.content_table}' and '{self.links_table}' tables.")
-        return rows_deleted 
+            print(f"Outliers removed from the '{self.content_table}' and '{self.links_table}' tables.")
+            return rows_deleted
+        
 
     def visualize_outliers(self, df, column='word_count'):
-        """
-        Create a boxplot visualization of outliers with custom legend.
+    
         
-        Args:
-            df (pd.DataFrame): Input DataFrame.
-            column (str): Column to visualize.
-        """
         plt.figure(figsize=(14, 10))
         
         # Create boxplot with hue to avoid deprecation warning
@@ -198,32 +185,64 @@ class DatabaseOutlierHandler:
             loc="best"
         )
         
-        plt.title(f"IQR Visualization for {column} by Newspaper")
+        plt.title(f"Boxplot con Outliers para {column} por Newspaper")
         plt.xlabel(column.replace('_', ' ').title())
         plt.ylabel("Newspaper")
         plt.grid(axis="x", linestyle="--", alpha=0.7)
         plt.tight_layout()
         
         # Save the plot instead of showing it
-        plt.savefig('outliers_boxplot.png')
+        plt.savefig('Scraping/src/visualizations/After_Cleaning/outliers_boxplot.png')
         
+    #visualize boxplot after delete
+    def boxplot_after(self, df, column='word_count'):
+            """
+            Create a boxplot visualization without outliers.
+            
+            Args:
+                df (pd.DataFrame): Input DataFrame.
+                column (str): Column to visualize.
+            """
+            plt.figure(figsize=(14, 10))
+            
+            sns.boxplot(
+                data=df,
+                x=column,
+                y="newspaper",
+                palette="pastel",
+                showmeans=True,
+                meanprops={
+                    "marker": "o", 
+                    "markerfacecolor": "red", 
+                    "markeredgecolor": "red", 
+                    "markersize": 10,
+                },
+                flierprops={
+                    "marker": "o", 
+                    "markerfacecolor": "grey", 
+                    "markeredgecolor": "black", 
+                    "markersize": 6,
+                },
+                showfliers=False  # Exclude outliers
+            )
+            
+            plt.title(f"Boxplot sin Outliers para {column} por Newspaper")
+            plt.xlabel(column.replace('_', ' ').title())
+            plt.ylabel("Newspaper")
+            plt.grid(axis="x", linestyle="--", alpha=0.7)
+            plt.tight_layout()
+            plt.savefig('Scraping/src/visualizations/After_Cleaning/outliers_boxplot_after_delete.png')
 
-def main(db_path, content_table, links_table, remove_outliers=False):
-    """
-    Main function to demonstrate outlier detection and handling.
-    
-    Args:
-        db_path (str): Path to the SQLite database.
-        content_table (str): Name of the content table.
-        links_table (str): Name of the links table.
-        remove_outliers (bool): Whether to remove outliers from the database.
-    """
+def main(db_path, content_table, links_table, remove_outliers=True):
     # Initialize handler
     handler = DatabaseOutlierHandler(db_path, content_table, links_table)
 
     # Fetch data
     df = handler.fetch_data()
     
+    # Format time column
+    df = handler.format_time(df, column="publish_date")
+
     # Add derived metrics
     df["word_count"] = df["text"].apply(lambda x: len(x.split()))
     df["char_count"] = df["text"].apply(len)
@@ -238,17 +257,19 @@ def main(db_path, content_table, links_table, remove_outliers=False):
     print(f"Total outliers: {len(outliers)}")
     
     # Visualize outliers
-    handler.visualize_outliers(df_with_outliers)
+    handler.boxplot_after(df_with_outliers)
     
     # Remove outliers from database if specified
     if remove_outliers:
         removed_count = handler.remove_outliers(df_with_outliers)
         print(f"\nRemoved {removed_count} outliers from the database.")
+    
+    #Visualize outliers after delete
+    handler.visualize_outliers(df_with_outliers,column='word_count')
 
 if __name__ == "__main__":
     db_path = "data/processed/articles.db"
     
     # Example usage with and without outlier removal
-    main(db_path, content_table="content", links_table="links", remove_outliers=False)
-    # Uncomment the following line to remove outliers
-    # main(db_path, content_table="content", links_table="links", remove_outliers=True)
+    main(db_path, content_table="content", links_table="links", remove_outliers=True)
+   

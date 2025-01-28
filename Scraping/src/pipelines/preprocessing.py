@@ -5,6 +5,7 @@ import torch
 import matplotlib.pyplot as plt
 from wordcloud import WordCloud
 import numpy as np
+import tqdm as tqdm
 
 # Initialize the BERT tokenizer
 tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
@@ -20,13 +21,56 @@ def fetch_text_data(conn):
     df = pd.read_sql_query(query, conn)
     return df
 
+#Update the databse with tokens column
+def add_tokens_column(conn):
+    cursor=conn.cursor()
+    cursor.execute('ALTER TABLE content ADD COLUMN tokens TEXT')
+    conn.commit()
+
+def update_tokens_column(conn,df):
+    try:
+        try:
+            add_tokens_column(conn)
+        except sql.OperationalError:
+            print('Column already exists')
+
+        # Process each text and update database
+        for index, row in tqdm(df.iterrows(), total=len(df), desc="Tokenizing texts"):
+            # Truncate and tokenize text
+            truncated_text = truncate_text(row['text'])
+            tokens = tokenizer.tokenize(truncated_text)
+            tokens_str = ','.join(tokens)  # Convert tokens list to string for storage
+            
+            # Update database
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE content 
+                SET tokens = ? 
+                WHERE id = ?
+            ''', (tokens_str, row['id']))
+            
+        conn.commit()
+        print("Successfully stored tokens in database")
+        
+    except Exception as e:
+        print(f"Error storing tokens: {e}")
+        
+
 # Function to truncate texts to a maximum token length
 def truncate_text(text, max_length=510):  # 510 to leave space for [CLS] and [SEP]
     # Tokenize the text
     tokens = tokenizer.tokenize(text)
     
-    # Truncate to max_length tokens
+    # Truncate to max_length tokens if needed
     truncated_tokens = tokens[:max_length]
+    
+    # Calculate padding length
+    padding_length = max_length - len(truncated_tokens)
+    
+    # Add padding tokens if needed
+    if padding_length > 0:
+        padding_tokens = ['[PAD]'] * padding_length
+        truncated_tokens = truncated_tokens + padding_tokens
     
     # Add [CLS] and [SEP] tokens
     truncated_tokens = ['[CLS]'] + truncated_tokens + ['[SEP]']
@@ -57,7 +101,7 @@ def process_text_with_truncation(df):
         
         tokenized_texts.append(encoded_input)
         token_lengths.append(len(tokenizer.tokenize(truncated_text)))
-        print(f'For text: {text[:50]}... token length is: {len(tokenizer.tokenize(truncated_text))}')
+        print(f'For text: {text[:50]} token length is: {len(tokenizer.tokenize(truncated_text))}')
     print(tokenized_texts[0]['input_ids'])
     return token_lengths
 
@@ -120,14 +164,16 @@ def generate_word_cloud(texts):
 def main(db_path):
     conn = connect_to_db(db_path)
     df = fetch_text_data(conn)
-    token_lengths = process_text_with_truncation(df.head(10))  # Adjust the number of texts as needed
-    conn.close()
-
-    # Plot token length distribution
+    token_lengths = process_text_with_truncation(df)
+    # Store tokens in database
+    update_tokens_column(df, conn)
+    
+    # Generate visualizations
+    token_lengths = process_text_with_truncation(df.head(10))
     plot_token_length_distribution(token_lengths)
-
-    # Generate and display word cloud
-    generate_word_cloud(df['text'].head(10).tolist())  # Adjust the number of texts as needed
+    generate_word_cloud(df['text'])
+    
+    conn.close()
 
 if __name__ == '__main__':
     db_path = 'data/processed/articles.db'
