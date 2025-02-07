@@ -12,8 +12,12 @@ tokenizer = BertTokenizer.from_pretrained('bert-base-multilingual-cased')
 
 # Connection with the database
 def connect_to_db(db_path):
-    conn = sql.connect(db_path)
-    return conn
+    try:
+        conn = sql.connect(db_path)
+        return conn
+    except Exception as e:
+        print(f"Error connecting to database: {e}")
+        return None
 
 # Fetch the data from the database
 def fetch_text_data(conn):
@@ -24,6 +28,7 @@ def fetch_text_data(conn):
 #Update the databse with tokens column
 def add_tokens_column(conn):
     cursor=conn.cursor()
+    cursor.execute('ALTER TABLE content ADD COLUMN truncated_text TEXT')
     cursor.execute('ALTER TABLE content ADD COLUMN tokens TEXT')
     conn.commit()
 
@@ -35,7 +40,7 @@ def update_tokens_column(conn,df):
             print('Column already exists')
 
         # Process each text and update database
-        for index, row in tqdm(df.iterrows(), total=len(df), desc="Tokenizing texts"):
+        for index, row in tqdm.tqdm(df.iterrows(), total=len(df), desc="Storing Tokens"):
             # Truncate and tokenize text
             truncated_text = truncate_text(row['text'])
             tokens = tokenizer.tokenize(truncated_text)
@@ -44,10 +49,11 @@ def update_tokens_column(conn,df):
             # Update database
             cursor = conn.cursor()
             cursor.execute('''
-                UPDATE content 
-                SET tokens = ? 
-                WHERE id = ?
-            ''', (tokens_str, row['id']))
+            UPDATE content 
+            SET truncated_text = ?, tokens = ? 
+            WHERE id = ?
+            ''', (truncated_text, tokens_str, row['id']))
+            
             
         conn.commit()
         print("Successfully stored tokens in database")
@@ -85,7 +91,7 @@ def process_text_with_truncation(df):
     tokenized_texts = []
     token_lengths = []
 
-    for text in texts:
+    for text in tqdm.tqdm(texts, desc="Tokenizing texts"):
         # Truncate the text
         truncated_text = truncate_text(text)
         
@@ -101,10 +107,9 @@ def process_text_with_truncation(df):
         
         tokenized_texts.append(encoded_input)
         token_lengths.append(len(tokenizer.tokenize(truncated_text)))
-        print(f'For text: {text[:50]} token length is: {len(tokenizer.tokenize(truncated_text))}')
     print(tokenized_texts[0]['input_ids'])
     return token_lengths
-
+"""
 # Visualize token lengths distribution with min, max, avg lines
 def plot_token_length_distribution(token_lengths):
     plt.figure(figsize=(20, 10))
@@ -159,19 +164,24 @@ def generate_word_cloud(texts):
     plt.axis('off')
     plt.title('Word Cloud of Tokens')
     plt.show()
+"""
 
 # Main function  
 def main(db_path):
     conn = connect_to_db(db_path)
+    
     df = fetch_text_data(conn)
+
     token_lengths = process_text_with_truncation(df)
+
+    print(df.head(10))
     # Store tokens in database
-    update_tokens_column(df, conn)
+    update_tokens_column(conn,df)
     
     # Generate visualizations
-    token_lengths = process_text_with_truncation(df.head(10))
-    plot_token_length_distribution(token_lengths)
-    generate_word_cloud(df['text'])
+    #token_lengths = process_text_with_truncation(df.head(10))
+    #plot_token_length_distribution(token_lengths)
+    #generate_word_cloud(df['text'])
     
     conn.close()
 
