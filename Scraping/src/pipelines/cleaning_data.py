@@ -48,11 +48,92 @@ class DatabaseOutlierHandler:
         """
         return self._execute_query(query, fetch=True)
 
+    def remove_null_dates(self, df, column="publish_date"):
+        """
+        Remove articles with null dates from both DataFrame and database.
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame
+            column (str): Name of the date column
+            
+        Returns:
+            pd.DataFrame: DataFrame with null dates removed
+        """
+        try:
+            # Identify rows with null dates
+            null_dates = df[df[column].isna()]
+            print(f"Found {len(null_dates)} articles with null dates")
+            
+            if not null_dates.empty:
+                with sqlite3.connect(self.db_path) as conn:
+                    cursor = conn.cursor()
+                    
+                    # Delete from both tables
+                    null_ids = tuple(null_dates['id'].tolist())
+                    
+                    # If only one ID, adjust the tuple syntax
+                    if len(null_ids) == 1:
+                        null_ids = f"({null_ids[0]})"
+                    
+                    cursor.execute(f"""
+                        DELETE FROM {self.content_table}
+                        WHERE id IN {null_ids}
+                    """)
+                    
+                    cursor.execute(f"""
+                        DELETE FROM {self.links_table}
+                        WHERE id IN {null_ids}
+                    """)
+                    
+                    conn.commit()
+                    print(f"Removed {len(null_dates)} articles with null dates from database")
+            
+            # Remove null dates from DataFrame
+            df = df.dropna(subset=[column])
+            return df
+            
+        except sqlite3.Error as e:
+            print(f"Error removing null dates: {e}")
+            return df
+
     def format_time(self, df, column="publish_date"):
-        df[column] = pd.to_datetime(df[column], errors="coerce",format='ISO8601')
+        """
+        Format timestamp column after removing null dates.
+        
+        Args:
+            df (pd.DataFrame): Input DataFrame
+            column (str): Name of the timestamp column
+            
+        Returns:
+            pd.DataFrame: DataFrame with formatted dates
+        """
+        # First remove null dates
+        df = self.remove_null_dates(df, column)
+        
+        
+        
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                for idx, row in df.iterrows():
+                    formatted_date = pd.to_datetime(row[column]).strftime('%Y-%m-%d')
+                    cursor.execute(f'''
+                        UPDATE {self.content_table}
+                        SET {column} = ?
+                        WHERE id = ?
+                    ''', (formatted_date, row['id']))
+                    
+                conn.commit()
+                print(f'Successfully updated {column} format in database')
+                
+        except sqlite3.Error as e:
+            print(f"Error updating dates in database: {e}")
+        
         print('DATE ADJUSTED')
-        print(df)
+        print(df[column].head())
         return df
+        
     
     def detect_outliers(self, df, column='word_count', threshold=1.5):
         """
